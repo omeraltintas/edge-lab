@@ -1,0 +1,5 @@
+# Depoda LF kalsin: Dockerfile ve shell scriptleri Windows'ta CRLF'e donusup
+# Linux'ta "exec format error" / "no such file" hatalarina yol acmasin.
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.bat text eol=crlf
