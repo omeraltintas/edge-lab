@@ -83,6 +83,34 @@ k6 run -e BASE_URL=http://192.168.56.10:18000 --summary-export docs/results/base
 
 Tek bir sıcak kod üzerinden ölçmek için: `-e CODE=hotlink`.
 
+### Ölçüm protokolü
+
+İki test birlikte kullanılır, tek başına ikisi de yeterli değil:
+
+| Test | Tip | Ne söyler |
+|---|---|---|
+| `loadtest/sweep.js` | kapalı çevrim, sabit VU | eşzamanlılık arttıkça gecikme nasıl değişiyor |
+| `loadtest/load.js` | açık çevrim, kademeli rps | hangi varış hızında sistem doymaya başlıyor |
+
+```powershell
+./loadtest/run-sweep.ps1                       # 5,10,20,40,80,160 VU × 30s
+k6 run --summary-export docs/results/step-run1.json loadtest/load.js
+```
+
+Okuma kuralı:
+
+- Kapalı çevrimde gecikmenin diz kırdığı nokta **eşzamanlılık** sınırıdır.
+- Açık çevrimde `dropped_iterations > 0` olduğu kademe **varış hızı** sınırıdır.
+- İkisinin kesişimi baseline sayılır. Tek koşu yetmez: 3 koşu, medyan.
+
+`load.js` eşikleri (`p95 < 100ms`, hata < %0.1) kademe testinde bilerek kırmızıya
+döner; bu bir arıza değil, tavanın bulunduğunun işaretidir.
+
+İlk koşu (`docs/results/overload-500rps-run1.json`) bilerek "aşırı yük" olarak
+adlandırıldı: 500 rps teklif edildi, sistem 33 rps'te doydu, 5xx üretmedi,
+gecikme kuyruk nedeniyle 15 saniyeye çıktı.
+
+
 ## Portlar
 
 | Bileşen | VM (192.168.56.10) | Not |
