@@ -12,24 +12,28 @@ Amaç "yeni bir bit.ly" değil; her katmanın ne kazandırdığını ve neye mal
 
 | Faz | Ne | Durum |
 |---|---|---|
-| 0 | Uygulama + Postgres + baseline | devam |
-| 1 | 3 replica + HAProxy + draining | - |
+| 0 | Uygulama + Postgres + baseline | tamam (43 rps) |
+| 1 | 3 replica + HAProxy | devam |
 | 2 | Kong gateway (auth, kota, rate limit) | - |
 | 3 | Redis cache (cache-aside, invalidation) | - |
 | 4 | RabbitMQ (outbox, tıklama analitiği) | - |
 | 5 | Resilience + hata matrisi | - |
 | 6 | Control Room + CI perf gate | - |
 
-## Mimari (Faz 0)
+## Mimari (Faz 1)
 
 ```mermaid
 flowchart LR
-    K[k6 / tarayıcı] -->|:18000| A[app<br/>FastAPI]
-    A -->|:5432| P[(postgres)]
+    K[k6 / tarayıcı] -->|:18080| H[HAProxy<br/>leastconn]
+    H --> A1[app-1<br/>0.5 CPU]
+    H --> A2[app-2<br/>0.5 CPU]
+    H --> A3[app-3<br/>0.5 CPU]
+    A1 & A2 & A3 -->|:5432| P[(postgres)]
+    S[stats :18404] -.-> H
 ```
 
-Sonraki fazlarda app'in önüne HAProxy, Kong ve Caddy eklenecek; cache ve broker
-yanlarına katılacak.
+Üç app aynı imajı, aynı limitlerle çalıştırır; tek fark isimleri. HAProxy
+`/healthz` ile sağlık kontrolü yapar ve `leastconn` ile dağıtır.
 
 ## Uçlar
 
@@ -77,8 +81,8 @@ k6 **host'ta** çalışır, VM'de değil: load generator ile ölçülen sistem a
 paylaşırsa p95 anlamsızlaşır.
 
 ```powershell
-k6 run -e BASE_URL=http://192.168.56.10:18000 loadtest/smoke.js
-k6 run -e BASE_URL=http://192.168.56.10:18000 --summary-export docs/results/baseline.json loadtest/load.js
+k6 run -e BASE_URL=http://192.168.56.10:18080 loadtest/smoke.js
+k6 run -e BASE_URL=http://192.168.56.10:18080 --summary-export docs/results/baseline.json loadtest/load.js
 ```
 
 Tek bir sıcak kod üzerinden ölçmek için: `-e CODE=hotlink`.
@@ -115,7 +119,9 @@ gecikme kuyruk nedeniyle 15 saniyeye çıktı.
 
 | Bileşen | VM (192.168.56.10) | Not |
 |---|---|---|
-| app | 18000 | Faz 1'de HAProxy arkasına geçecek |
+| HAProxy | 18080 | tek giriş noktası |
+| HAProxy stats | 18404 | `/stats` |
+| app-1/2/3 | - | yalnızca `expose: 8000`, host'a açılmaz |
 | postgres | 15432 | Windows'tan migration için |
 
 ## Seed verisi

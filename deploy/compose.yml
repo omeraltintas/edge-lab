@@ -1,5 +1,34 @@
 name: edge-lab
 
+# Uc replica ayni tanimi paylasiyor. `deploy.replicas` yerine acik servisler
+# kullaniyoruz: HAProxy'nin `server` satirlari sabit DNS adi ister, Docker'in
+# dondurdugu tek isim + coklu A kaydi ile ugrasmak Faz 1 icin gereksiz risk.
+x-app: &app
+  build:
+    context: ../app
+  image: edge-lab-app:local
+  environment:
+    DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-edge}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD tanimli degil}@postgres:5432/${POSTGRES_DB:-edge}
+    BASE_URL: ${BASE_URL:-http://192.168.56.10:18080}
+  expose:
+    - "8000"
+  depends_on:
+    postgres:
+      condition: service_healthy
+  cpus: 0.5
+  stop_grace_period: 30s
+  healthcheck:
+    test:
+      - CMD
+      - python
+      - -c
+      - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')
+    interval: 10s
+    timeout: 3s
+    retries: 3
+    start_period: 10s
+  restart: unless-stopped
+
 services:
   postgres:
     image: postgres:17-alpine
@@ -20,30 +49,28 @@ services:
       retries: 10
     restart: unless-stopped
 
-  app:
-    build:
-      context: ../app
-    environment:
-      # container aginda servis adi: postgres
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-edge}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD tanimli degil}@postgres:5432/${POSTGRES_DB:-edge}
-      BASE_URL: ${BASE_URL:-http://192.168.56.10:18000}
+  app-1:
+    <<: *app
+  app-2:
+    <<: *app
+  app-3:
+    <<: *app
+
+  haproxy:
+    image: haproxy:3.0-alpine
+    volumes:
+      - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
     ports:
-      - "${APP_PORT:-18000}:8000"
+      - "${LB_PORT:-18080}:80"
+      - "${LB_STATS_PORT:-18404}:8404"
     depends_on:
-      postgres:
+      app-1:
+        condition: service_healthy
+      app-2:
+        condition: service_healthy
+      app-3:
         condition: service_healthy
     cpus: 0.5
-    stop_grace_period: 30s
-    healthcheck:
-      test:
-        - CMD
-        - python
-        - -c
-        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')
-      interval: 10s
-      timeout: 3s
-      retries: 3
-      start_period: 10s
     restart: unless-stopped
 
 volumes:

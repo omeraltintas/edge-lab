@@ -14,17 +14,20 @@ down: ## Container'lari durdurur (volume'lara dokunmaz)
 ps: ## Servis durumlari
 	$(COMPOSE) ps
 
-logs: ## app loglari
-	$(COMPOSE) logs -f --tail=50 app
+logs: ## tum servis loglari
+	$(COMPOSE) logs -f --tail=50
+
+stats: ## HAProxy sunucu durumlari (CSV)
+	@curl -s 'http://127.0.0.1:18404/stats;csv' | head -6
 
 psql: ## postgres oturumu
 	$(COMPOSE) exec postgres sh -c 'psql -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"'
 
 migrate: ## Alembic migration'larini uygular
-	$(COMPOSE) run --rm app alembic upgrade head
+	$(COMPOSE) run --rm app-1 alembic upgrade head
 
 seed: ## 1000 deterministik kod + 1 sicak kod ekler
-	$(COMPOSE) run --rm app python -m edge_lab.seed
+	$(COMPOSE) run --rm app-1 python -m edge_lab.seed
 
 test: ## Testler (yerelde, SQLite ile)
 	cd app && uv run pytest -q
