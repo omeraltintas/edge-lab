@@ -78,10 +78,50 @@ Ayrıca p99'un p95'ten kopması (626 ms → 7.3 s) tek tek yavaş istekler deği
 ~30 isteğin birlikte takılıp birlikte bitmesi. Tüm fazlalık `http_req_waiting`
 içinde, yani sunucu tarafında. Sebep tespit edilmedi.
 
+## Faz 2a — Kong geçiş modu (plugin yok)
+
+Ölçüm aynı oturumda, iki kapı üzerinden yapıldı: `18090` Kong'u atlayıp
+doğrudan HAProxy'ye gider, `18080` Kong üzerinden gider. 40 VU, 30 s, A-B-A-B:
+
+| Sıra | Yol | Dosya | rps | medyan | p95 | p99 |
+|---|---|---|---|---|---|---|
+| 1 | bypass | `ab-bypass-1-sweep-vus-40.json` | 161.1 | 196 ms | 517 ms | 1082 ms |
+| 2 | Kong | `ab-kong-1-sweep-vus-40.json` | 165.5 | 201 ms | 486 ms | 963 ms |
+| 3 | bypass | `ab-bypass-2-sweep-vus-40.json` | 160.9 | 216 ms | 459 ms | 650 ms |
+| 4 | Kong | `ab-kong-2-sweep-vus-40.json` | 181.0 | 203 ms | 381 ms | 502 ms |
+
+Doygun yükte Kong'un throughput maliyeti ölçülemedi; fark iki yöne de savruluyor.
+Sebebi yapısal: 40 VU'da kutu zaten doymuş, gecikmeyi kuyruk belirliyor ve
+istek başına eklenen 1 ms kayboluyor.
+
+Bu yüzden bir de doymamış nokta ölçüldü (1 VU):
+
+| Yol | Dosya | rps | medyan | ortalama | p99 |
+|---|---|---|---|---|---|
+| bypass | `ab-bypass-1vu-sweep-vus-1.json` | 81.1 | 9.19 ms | 12.27 ms | 74.7 ms |
+| Kong | `ab-kong-1vu-sweep-vus-1.json` | 73.5 | 9.98 ms | 13.53 ms | 78.1 ms |
+
+1 VU'da istekler sırayla işlendiği için fark doğrudan toplanır:
+**Kong'un maliyeti ~0.8 ms medyan, ~1.3 ms ortalama.** Boşta servis süresi
+9.2 ms iken bu ~%10; doymuş sistemde ise görünmez.
+
+### Neden Faz 1 ve Faz 2 tabloları karşılaştırılmıyor
+
+Aynı test, iki ayrı oturum: Faz 1'de 40 VU'da 102.6 rps, Faz 2'de 173.5 rps.
+Ama Faz 2'de Kong'u **atlayan** yol da 161 rps veriyor. Yani fark gateway'den
+değil, kutunun o saatteki halinden (host yükü, emülasyon). Faz 2 dosyaları
+(`faz2-sweep-vus-{20,40,80}.json`) yalnızca "o oturumda kutu ne yaptı" sorusuna
+cevap verir; gateway maliyeti için yukarıdaki A/B geçerlidir.
+
 ## Kurallar
 
 - Kapasite **kapalı çevrim** eğrisinden okunur (rps sabitlenip gecikme artan
   nokta). Açık çevrimde kuyruk kapasiteyi olduğundan yüksek gösterebilir.
-- Tek koşu kaydedilir. İki koşu arasında %20'den fazla fark çıkarsa önce
-  ortam sorgulanır, sonra sayı yazılır.
+- **Karşılaştırma aynı oturumda, A-B-A-B yapılır.** Bu kutuda iki ayrı oturum
+  arasında 1.6× fark görüldü (103 → 173 rps); oturumlar arası farklar
+  yorumlanmaz.
+- Doygun yükte throughput, doymamış yükte (1 VU) gecikme ölçülür. Tek ölçüm
+  ikisini birden vermez.
 - 5xx sıfır olması "başarı" değil, "çökmüyor" demektir; kapasite ayrı ölçülür.
+- 1 VU'da bile p99 75-78 ms: kuyruk yokken de sıçramalar var. Kaynağı
+  bilinmiyor (VM/disk jitter'ı olabilir).

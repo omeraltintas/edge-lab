@@ -14,7 +14,7 @@ Amaç "yeni bir bit.ly" değil; her katmanın ne kazandırdığını ve neye mal
 |---|---|---|
 | 0 | Uygulama + Postgres + baseline | tamam (43 rps) |
 | 1 | 3 replica + HAProxy | tamam (103 rps) |
-| 2 | Kong gateway (geçiş + rate limit) | devam |
+| 2 | Kong gateway (geçiş + rate limit) | geçiş tamam (~1 ms/istek), rate limit sırada |
 | 3 | Redis cache (cache-aside, invalidation) | - |
 | 4 | RabbitMQ (outbox, tıklama analitiği) | - |
 | 5 | Resilience + hata matrisi | - |
@@ -42,6 +42,10 @@ okunur, Kong'un kendi veritabanı yoktur.
 Teşhis için ikinci bir kapı var: `:18090` doğrudan HAProxy'ye gider. Yük
 testlerinde kullanılmaz; "sorun gateway'de mi, arkasında mı" sorusunu iki curl
 ile ayırmak içindir.
+
+Ölçüm sonucu: doygun yükte (40 VU) Kong'un throughput maliyeti ölçülemedi;
+doymamış yükte (1 VU) istek başına **~0.8 ms medyan, ~1.3 ms ortalama** ekliyor.
+Ayrıntı: [`docs/results/README.md`](docs/results/README.md).
 
 ## Uçlar
 
@@ -169,7 +173,10 @@ docs/results/ ham ölçüm JSON'ları + faz tabloları
   bunun sebebinin bu paylaşılan darboğaz olduğu **ölçülmedi**, sadece
   işaret edildi.
 - Gecikme dağılımının kuyruğu (p99) bazı koşularda 7-8 saniyeye çıkıyor;
-  sebebi tespit edilmedi.
+  sebebi tespit edilmedi. 1 VU'da bile p99 ~75 ms.
+- Ölçüm gürültüsü yüksek: aynı test iki ayrı oturumda 103 ve 173 rps verdi.
+  Faz karşılaştırmaları bu yüzden aynı oturumda A/B olarak yapılır
+  (`docs/results/README.md`).
 - Auth yok; Kong şimdilik yalnızca geçiş modunda. Rate limit Faz 2b'de.
 - Kong upstream adresini açılışta çözer; HAProxy yeniden başlayıp IP
   değiştirirse Kong eski adrese gitmeye çalışabilir.
