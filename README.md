@@ -13,18 +13,19 @@ Amaç "yeni bir bit.ly" değil; her katmanın ne kazandırdığını ve neye mal
 | Faz | Ne | Durum |
 |---|---|---|
 | 0 | Uygulama + Postgres + baseline | tamam (43 rps) |
-| 1 | 3 replica + HAProxy | devam |
-| 2 | Kong gateway (auth, kota, rate limit) | - |
+| 1 | 3 replica + HAProxy | tamam (103 rps) |
+| 2 | Kong gateway (geçiş + rate limit) | devam |
 | 3 | Redis cache (cache-aside, invalidation) | - |
 | 4 | RabbitMQ (outbox, tıklama analitiği) | - |
 | 5 | Resilience + hata matrisi | - |
 | 6 | Control Room + CI perf gate | - |
 
-## Mimari (Faz 1)
+## Mimari (Faz 2)
 
 ```mermaid
 flowchart LR
-    K[k6 / tarayıcı] -->|:18080| H[HAProxy<br/>leastconn]
+    K[k6 / tarayıcı] -->|:18080| G[Kong<br/>gateway]
+    G -->|haproxy:80| H[HAProxy<br/>leastconn]
     H --> A1[app-1<br/>0.5 CPU]
     H --> A2[app-2<br/>0.5 CPU]
     H --> A3[app-3<br/>0.5 CPU]
@@ -32,8 +33,15 @@ flowchart LR
     S[stats :18404] -.-> H
 ```
 
-Üç app aynı imajı, aynı limitlerle çalıştırır; tek fark isimleri. HAProxy
-`/healthz` ile sağlık kontrolü yapar ve `leastconn` ile dağıtır.
+Faz 1'de bu şemanın Kong'suz hâli ölçüldü: **43 → 103 rps**. Faz 2'nin tek
+sorusu, aynı yükün önüne bir gateway koymanın neye mal olduğu.
+
+Kong DB-less modda çalışır: rota tanımı `deploy/kong/kong.yml` dosyasından
+okunur, Kong'un kendi veritabanı yoktur.
+
+Teşhis için ikinci bir kapı var: `:18090` doğrudan HAProxy'ye gider. Yük
+testlerinde kullanılmaz; "sorun gateway'de mi, arkasında mı" sorusunu iki curl
+ile ayırmak içindir.
 
 ## Uçlar
 
@@ -97,15 +105,23 @@ Tek bir sıcak kod üzerinden ölçmek için: `-e CODE=hotlink`.
 | `loadtest/load.js` | açık çevrim, kademeli rps | hangi varış hızında sistem doymaya başlıyor |
 
 ```powershell
-./loadtest/run-sweep.ps1                       # 5,10,20,40,80,160 VU × 30s
-k6 run --summary-export docs/results/step-run1.json loadtest/load.js
+./loadtest/run-sweep.ps1 -Prefix faz2       # 5,10,20,40,80,160 VU × 30s
+k6 run --summary-export docs/results/faz2-step-run1.json loadtest/load.js
 ```
+
+`-Prefix` her dosyayı `faz2-sweep-vus-<n>.json` diye yazar. Prefix vermezsen
+sabit isim kullanılır ve önceki fazın ölçümlerinin üzerine geçer.
 
 Okuma kuralı:
 
 - Kapalı çevrimde gecikmenin diz kırdığı nokta **eşzamanlılık** sınırıdır.
 - Açık çevrimde `dropped_iterations > 0` olduğu kademe **varış hızı** sınırıdır.
-- İkisinin kesişimi baseline sayılır. Tek koşu yetmez: 3 koşu, medyan.
+- Kapasiteyi **kapalı çevrim** verir: seviye artarken rps sabitlenip gecikme
+  artıyorsa tavan oradadır. Açık çevrimde kuyruk yüzünden düşen istekler
+  kapasiteyi olduğundan yüksek gösterebilir; iki test çelişirse kapalı çevrim
+  esas alınır.
+- Faz 1'den itibaren tek koşu kaydedilir. İki koşu arasında %20'den fazla fark
+  çıkarsa önce ortamı (VM yükü, host) sorgularız.
 
 `load.js` eşikleri (`p95 < 100ms`, hata < %0.1) kademe testinde bilerek kırmızıya
 döner; bu bir arıza değil, tavanın bulunduğunun işaretidir.
@@ -119,7 +135,9 @@ gecikme kuyruk nedeniyle 15 saniyeye çıktı.
 
 | Bileşen | VM (192.168.56.10) | Not |
 |---|---|---|
-| HAProxy | 18080 | tek giriş noktası |
+| Kong (proxy) | 18080 | dışarıya açılan tek kapı; `BASE_URL` buraya bakar |
+| Kong admin | 18081 | route/plugin denetimi |
+| HAProxy | 18090 | yalnızca teşhis: Kong'u atlar |
 | HAProxy stats | 18404 | `/stats` |
 | app-1/2/3 | - | yalnızca `expose: 8000`, host'a açılmaz |
 | postgres | 15432 | Windows'tan migration için |
@@ -135,12 +153,24 @@ aynı satırları kullanabilmesi için sabit.
 ```
 app/          FastAPI, SQLAlchemy, Alembic, Dockerfile
 deploy/       compose.yml, .env.example
-loadtest/     k6 senaryoları
-docs/         ADR'ler, sonra runbook ve sonuçlar
+deploy/haproxy/  LB yapılandırması
+deploy/kong/     gateway rotaları (DB-less, kong.yml)
+loadtest/     k6 senaryoları + sweep betiği
+docs/adr/     karar günlüğü
+docs/results/ ham ölçüm JSON'ları + faz tabloları
 ```
 
 ## Bilinen sınırlar
 
-- Tek VM: bütün container'lar aynı çekirdekleri paylaşır, "replica" ağ sıçraması yok.
-- Faz 0'da auth yok; `owner_key` yalnızca sahiplik kontrolü için.
+- Tek VM: bütün container'lar aynı çekirdekleri paylaşır, "replica" ağ
+  sıçraması yok. VM donanım hızlandırmasız (NEM) çalıştığı için istek başına
+  CPU maliyeti yüksek; mutlak rps düşük.
+- Postgres tek instance ve 1.0 vCPU. Faz 1'de kapasite 3× değil 2.4× arttı;
+  bunun sebebinin bu paylaşılan darboğaz olduğu **ölçülmedi**, sadece
+  işaret edildi.
+- Gecikme dağılımının kuyruğu (p99) bazı koşularda 7-8 saniyeye çıkıyor;
+  sebebi tespit edilmedi.
+- Auth yok; Kong şimdilik yalnızca geçiş modunda. Rate limit Faz 2b'de.
+- Kong upstream adresini açılışta çözer; HAProxy yeniden başlayıp IP
+  değiştirirse Kong eski adrese gitmeye çalışabilir.
 - Alarm/alerting henüz yok.

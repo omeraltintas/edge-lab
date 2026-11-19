@@ -1,6 +1,6 @@
 COMPOSE := docker compose -f deploy/compose.yml --env-file deploy/.env
 
-.PHONY: help up down ps logs psql migrate seed test lint fmt
+.PHONY: help up down ps logs stats gateway psql migrate seed test lint fmt
 
 help: ## Hedefleri listeler
 	@grep -hE '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | sed 's/:.*## /\t/'
@@ -19,6 +19,9 @@ logs: ## tum servis loglari
 
 stats: ## HAProxy sunucu durumlari (CSV)
 	@curl -s 'http://127.0.0.1:18404/stats;csv' | head -6
+
+gateway: ## Kong route ozeti (admin API)
+	@curl -s http://127.0.0.1:18081/routes | head -c 400; echo
 
 psql: ## postgres oturumu
 	$(COMPOSE) exec postgres sh -c 'psql -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"'

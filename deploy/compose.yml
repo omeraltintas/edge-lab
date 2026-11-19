@@ -61,7 +61,9 @@ services:
     volumes:
       - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
     ports:
-      - "${LB_PORT:-18080}:80"
+      # Trafik artik Kong'dan geliyor. Bu port sadece teshis icin:
+      # "sorun gateway'de mi, arkasinda mi" sorusunu iki curl ile ayirir.
+      - "${LB_DEBUG_PORT:-18090}:80"
       - "${LB_STATS_PORT:-18404}:8404"
     depends_on:
       app-1:
@@ -70,6 +72,34 @@ services:
         condition: service_healthy
       app-3:
         condition: service_healthy
+    cpus: 0.5
+    restart: unless-stopped
+
+  kong:
+    image: kong:3.9
+    environment:
+      # DB-less mod: konfigurasyon kong.yml'den okunur, Kong'un kendi
+      # veritabani yok. Tek VM'de ikinci bir Postgres gereksiz yuk olurdu.
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /kong/declarative/kong.yml
+      KONG_PROXY_LISTEN: 0.0.0.0:8000
+      KONG_ADMIN_LISTEN: 0.0.0.0:8001
+      KONG_LOG_LEVEL: notice
+      # Yuk testinde istek basina log yazmak olcumu kirletir.
+      KONG_PROXY_ACCESS_LOG: /dev/null
+      KONG_ADMIN_ACCESS_LOG: /dev/null
+      # 4 vCPU'da tek nginx worker yeter; fazlasi app'ten CPU calar.
+      KONG_NGINX_WORKER_PROCESSES: "1"
+    volumes:
+      - ./kong/kong.yml:/kong/declarative/kong.yml:ro
+    ports:
+      - "${KONG_PROXY_PORT:-18080}:8000"
+      - "${KONG_ADMIN_PORT:-18081}:8001"
+    depends_on:
+      # Kong, HAProxy'nin saglikli olmasini beklemez: HAProxy bir healthcheck
+      # yayinlamiyor ve Kong zaten 502 dondurur. Erken baslamasi zararsiz.
+      haproxy:
+        condition: service_started
     cpus: 0.5
     restart: unless-stopped
 

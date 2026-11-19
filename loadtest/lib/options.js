@@ -1,5 +1,6 @@
 // Tum senaryolarin ortak ayarlari.
-export const BASE_URL = __ENV.BASE_URL || 'http://192.168.56.10:18000';
+// 18080 = Kong (disariya acilan tek kapi). Kong'u atlamak icin -e BASE_URL=...:18090
+export const BASE_URL = __ENV.BASE_URL || 'http://192.168.56.10:18080';
 
 // Baseline icin esikler gevsek: once olcmek, sonra kapi koymak istiyoruz.
 export const thresholds = {

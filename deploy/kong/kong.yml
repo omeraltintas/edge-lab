@@ -1,0 +1,41 @@
+_format_version: "3.0"
+
+# Faz 2a: Kong "gecis" (passthrough) modunda.
+#
+# Tek soru: HAProxy'nin onune bir gateway koymak kac rps / kac ms'ye mal
+# oluyor? Bu yuzden burada plugin YOK. Ayni kosuda rate limit de acsaydik,
+# olctugumuz farkin ne kadari gateway maliyeti, ne kadari plugin maliyeti
+# oldugunu ayiramazdik.
+#
+# Faz 2b: asagidaki servis taniminin icine su blok eklenecek (girinti servis
+# seviyesinde, yani `routes:` ile ayni hizada):
+#
+#   plugins:
+#     - name: rate-limiting
+#       config:
+#         minute: 6000          # 100 rps = 6000/dk
+#         policy: local
+#         limit_by: ip
+#         fault_tolerant: true
+#
+services:
+  - name: edge-lab
+    url: http://haproxy:80
+    connect_timeout: 1000
+    read_timeout: 30000
+    write_timeout: 30000
+    # Kong varsayilan olarak baglanti hatasinda 5 kez dener. Kapatiyoruz:
+    # bir istek basarisizsa bunu gormek istiyoruz, gizlenmesini degil.
+    retries: 0
+    routes:
+      - name: edge-lab-root
+        paths:
+          - /
+        # Path'i kirpmadan app'e ilet: /hotlink -> /hotlink
+        strip_path: false
+        protocols:
+          - http
+        methods:
+          - GET
+          - POST
+          - DELETE
