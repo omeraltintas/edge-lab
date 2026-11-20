@@ -66,7 +66,7 @@ ile ayırmak içindir. Ayrıntılar: [`docs/results/README.md`](docs/results/REA
 
 | Yol | Açıklama |
 |---|---|
-| `POST /api/links` | `{"url": "...", "owner_key": "..."}` → 201, kısa kod üretir |
+| `POST /api/links` | `{"url": "...", "owner_key": "..."}` → 201, kısa kod üretir. `owner_key` 8-64 karakter |
 | `GET /{code}` | 302 redirect; bilinmeyen kod 404 |
 | `DELETE /api/links/{code}` | `X-Owner-Key` başlığı eşleşmeli; 204/403/404 |
 | `GET /healthz` | Liveness; DB'ye bakmaz |
