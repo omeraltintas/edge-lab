@@ -15,12 +15,12 @@ Amaç "yeni bir bit.ly" değil; her katmanın ne kazandırdığını ve neye mal
 | 0 | Uygulama + Postgres + baseline | tamam (43 rps) |
 | 1 | 3 replica + HAProxy | tamam (103 rps) |
 | 2 | Kong gateway (geçiş + rate limit) | geçiş tamam (~1 ms/istek), rate limit sırada |
-| 3 | Redis cache (cache-aside, invalidation) | - |
+| 3 | Redis cache (cache-aside, invalidation) | devam |
 | 4 | RabbitMQ (outbox, tıklama analitiği) | - |
 | 5 | Resilience + hata matrisi | - |
 | 6 | Control Room + CI perf gate | - |
 
-## Mimari (Faz 2)
+## Mimari (Faz 3)
 
 ```mermaid
 flowchart LR
@@ -29,23 +29,38 @@ flowchart LR
     H --> A1[app-1<br/>0.5 CPU]
     H --> A2[app-2<br/>0.5 CPU]
     H --> A3[app-3<br/>0.5 CPU]
+    A1 & A2 & A3 -.->|cache-aside| R[(redis<br/>0.25 CPU)]
     A1 & A2 & A3 -->|:5432| P[(postgres)]
     S[stats :18404] -.-> H
 ```
 
-Faz 1'de bu şemanın Kong'suz hâli ölçüldü: **43 → 103 rps**. Faz 2'nin tek
-sorusu, aynı yükün önüne bir gateway koymanın neye mal olduğu.
+`GET /{code}` önce Redis'e bakar (`link:{code}`), ıskalarsa Postgres'ten okur ve
+Redis'e yazar. `DELETE` başarılı olunca anahtar silinir. Redis erişilemezse istek
+DB'ye düşer (fail-open); `/readyz` Redis'e bakmaz.
+
+Cache, `CACHE_ENABLED` ile açılıp kapanır, böylece ikisi aynı oturumda
+karşılaştırılabilir:
+
+```bash
+make cache-on     # app'leri cache açık olarak yeniden yaratır
+make cache-off
+```
+
+### Şimdiye kadar ölçülenler
+
+| Faz | Değişiklik | Sonuç |
+|---|---|---|
+| 0 | tek replica | 43 rps (tavan) |
+| 1 | 3 replica + HAProxy | 103 rps (aynı oturumda ölçüldü) |
+| 2 | + Kong (geçiş modu) | istek başına ~0.8 ms medyan; doygun yükte throughput kaybı ölçülemedi |
+| 3 | + Redis cache | **sırada** |
 
 Kong DB-less modda çalışır: rota tanımı `deploy/kong/kong.yml` dosyasından
 okunur, Kong'un kendi veritabanı yoktur.
 
 Teşhis için ikinci bir kapı var: `:18090` doğrudan HAProxy'ye gider. Yük
 testlerinde kullanılmaz; "sorun gateway'de mi, arkasında mı" sorusunu iki curl
-ile ayırmak içindir.
-
-Ölçüm sonucu: doygun yükte (40 VU) Kong'un throughput maliyeti ölçülemedi;
-doymamış yükte (1 VU) istek başına **~0.8 ms medyan, ~1.3 ms ortalama** ekliyor.
-Ayrıntı: [`docs/results/README.md`](docs/results/README.md).
+ile ayırmak içindir. Ayrıntılar: [`docs/results/README.md`](docs/results/README.md).
 
 ## Uçlar
 
@@ -144,6 +159,7 @@ gecikme kuyruk nedeniyle 15 saniyeye çıktı.
 | HAProxy | 18090 | yalnızca teşhis: Kong'u atlar |
 | HAProxy stats | 18404 | `/stats` |
 | app-1/2/3 | - | yalnızca `expose: 8000`, host'a açılmaz |
+| redis | - | yalnızca iç ağda; host'a açılmaz |
 | postgres | 15432 | Windows'tan migration için |
 
 ## Seed verisi
@@ -178,6 +194,10 @@ docs/results/ ham ölçüm JSON'ları + faz tabloları
   Faz karşılaştırmaları bu yüzden aynı oturumda A/B olarak yapılır
   (`docs/results/README.md`).
 - Auth yok; Kong şimdilik yalnızca geçiş modunda. Rate limit Faz 2b'de.
+- Cache'te bayat veri penceresi var: `DELETE` ile DB commit'i arasında gelen
+  bir `GET`, eski URL'i cache'e geri yazabilir; kayıt en fazla `CACHE_TTL`
+  kadar yaşar. Aynı anahtara eşzamanlı istekler DB'ye birlikte gidebilir
+  (thundering herd).
 - Kong upstream adresini açılışta çözer; HAProxy yeniden başlayıp IP
   değiştirirse Kong eski adrese gitmeye çalışabilir.
 - Alarm/alerting henüz yok.

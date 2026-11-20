@@ -10,10 +10,16 @@ x-app: &app
   environment:
     DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-edge}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD tanimli degil}@postgres:5432/${POSTGRES_DB:-edge}
     BASE_URL: ${BASE_URL:-http://192.168.56.10:18080}
+    REDIS_URL: redis://redis:6379/0
+    # Ayni oturumda cache'li/cache'siz A/B kosmak icin: make cache-on / cache-off
+    CACHE_ENABLED: ${CACHE_ENABLED:-false}
+    CACHE_TTL: ${CACHE_TTL:-300}
   expose:
     - "8000"
   depends_on:
     postgres:
+      condition: service_healthy
+    redis:
       condition: service_healthy
   cpus: 0.5
   stop_grace_period: 30s
@@ -55,6 +61,33 @@ services:
     <<: *app
   app-3:
     <<: *app
+
+  redis:
+    image: redis:7-alpine
+    # Bu bir cache, veri deposu degil: disk kaliciligi kapali. Acik olsaydi
+    # her yazma disk I/O'su ekler ve olctugumuz sey cache'ten cok disk olurdu.
+    command:
+      - redis-server
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+      - --maxmemory
+      - 128mb
+      # Bellek dolunca hata verme, en eski anahtari at.
+      - --maxmemory-policy
+      - allkeys-lru
+    expose:
+      - "6379"
+    # Redis 100k ops/s mertebesinde calisir; 200 rps icin 0.25 fazlasiyla
+    # yeter. Kalan CPU app'lerde kalsin.
+    cpus: 0.25
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
 
   haproxy:
     image: haproxy:3.0-alpine

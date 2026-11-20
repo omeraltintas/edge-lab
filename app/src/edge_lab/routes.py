@@ -4,6 +4,7 @@ from fastapi import APIRouter, Header, HTTPException, Response, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy.exc import IntegrityError
 
+from edge_lab import cache
 from edge_lab.codes import new_code
 from edge_lab.config import BASE_URL, CODE_LENGTH
 from edge_lab.db import DbSession
@@ -40,10 +41,15 @@ def create_link(payload: LinkCreate, db: DbSession) -> LinkCreated:
 
 @router.get("/{code}")
 def redirect(code: str, db: DbSession) -> RedirectResponse:
-    link = db.get(Link, code)
-    if link is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown code")
-    return RedirectResponse(link.url, status_code=status.HTTP_302_FOUND)
+    # Cache-aside: once cache, iskalarsa DB + cache'e yaz.
+    url = cache.get_url(code)
+    if url is None:
+        link = db.get(Link, code)
+        if link is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown code")
+        url = link.url
+        cache.set_url(code, url)
+    return RedirectResponse(url, status_code=status.HTTP_302_FOUND)
 
 
 @router.delete("/api/links/{code}", status_code=status.HTTP_204_NO_CONTENT)
@@ -55,4 +61,7 @@ def delete_link(code: str, db: DbSession, owner_key: OwnerKey) -> Response:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "not the owner")
     db.delete(link)
     db.commit()
+    # Once DB, sonra cache: DB silindi ama cache dusuremezsek bile TTL
+    # (CACHE_TTL) bayat kaydin ust siniridir.
+    cache.drop(code)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
